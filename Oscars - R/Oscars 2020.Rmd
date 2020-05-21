@@ -1,0 +1,1074 @@
+---
+title: "The Oscars 2020 - My (Frequentist) Predictions"
+author: Alejandro Álvarez 
+output: 
+   html_document:
+      toc: true
+      toc_depth: 3
+      toc_float:
+         collapsed: false
+      
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(DT)
+library(tm)
+library(pdftools)
+library(wordcloud2)
+library(tidyverse)
+library(htmlwidgets)
+library(webshot)
+library(rmdformats)
+library(plotly)
+
+coloresP <- c("#009933","#00e64d","#00cccc","#33ffff",
+              "#ace600","#d9ff66","#ffcc00","#e6e600",
+              "#ff9900","#ff3300","#ff0066","#990099",
+              "#4700b3","#006080","#0099cc","#e600e6",
+              "#aa80ff","#333399","#ff80bf","#4dffc3",
+              "#00ff00","#80d4ff","#00001a","#004466",
+              "#008060","#ff6666")
+
+
+files <- set_names(list.files("Movies/",
+                              pattern = "pdf$",
+                              full.names = TRUE),
+                   str_replace(list.files("Movies/",
+                                          pattern = "pdf$",
+                                          full.names = FALSE),".pdf",""))
+
+movies <- Corpus(URISource(files),readerControl = list(reader = readPDF()))
+
+names(movies) <- str_replace(names(movies),".pdf","")
+
+movies <- tm_map(movies,stripWhitespace)
+movies <- tm_map(movies,content_transformer(tolower))
+movies <- tm_map(movies,content_transformer(removeNumbers))
+
+dtm <- DocumentTermMatrix(movies,
+                          control = list(language = "en"))
+
+wft <- as_tibble(as.matrix(dtm)) %>%
+   mutate(MOVIE = row.names(as.matrix(dtm))) %>%
+   select(ncol(as.matrix(dtm)) + 1,1:(ncol(as.matrix(dtm)))) %>%
+   gather(WORD,FREQ,-MOVIE) %>%
+   filter(!str_detect(WORD,"https:") & !str_detect(WORD,"leaderboard:")) %>%
+   mutate(N_PRIZE = if_else(!is.na(str_extract(WORD,":")),1,0)*FREQ,
+          WORD = str_replace(WORD,":",""),
+          WORD = str_replace(WORD,"\\(",""),
+          WORD = str_replace(WORD,"\\)",""),
+          WORD = str_replace(WORD,",","")) %>%
+   group_by(MOVIE,WORD) %>%
+   summarise_all(sum) %>%
+   ungroup()
+
+
+```
+
+***
+
+**Predictions of the winners of the 92nd Academy Awards, based on the number of awards the nominees have won in each category, in international film festivals during the 2019 - 2020 award season.**
+
+The following categories were not analyzed due to a lack of data: 
+
+* Original Song
+* Animated Short Film
+* Live Action Short Film
+* Documentary Short Subject
+* Costume Design
+
+Source: https://editorial.rottentomatoes.com/article/awards-leaderboard-top-movies-of-2019/.
+
+# Total Awards 2019 - 2020
+
+
+***
+<center>
+**Total awards by film**
+
+```{r}
+
+n_prizes <- wft %>%
+   group_by(MOVIE) %>%
+   summarise(N_PRIZE = sum(N_PRIZE)) %>%
+   arrange(-N_PRIZE) %>% 
+   rename("# awards" = N_PRIZE,"Film" = MOVIE) %>% 
+   ggplot(aes(x = reorder(Film,-`# awards`),y = `# awards`)) +
+   geom_col(fill = coloresP[14]) +
+   theme(axis.text.x = element_text(angle = 90),
+         axis.ticks = element_blank()) +
+   theme(panel.background = element_blank(),
+         panel.grid = element_blank()) +
+   xlab("\n\n\n Film") + 
+   ylab("\n Total awards won") 
+
+ggplotly(n_prizes,tooltip = c("y"))
+
+```
+
+```{r}
+
+wft %>%
+   group_by(MOVIE) %>%
+   summarise(N_PRIZE = sum(N_PRIZE)) %>%
+   arrange(-N_PRIZE) %>% 
+   rename("# awards" = N_PRIZE,"Film" = MOVIE) %>% 
+   datatable(rownames = FALSE, 
+             filter = "top",
+             width = 400,
+             options = list(pageLength = 5, 
+                            scrollX = T,
+                            lengthMenu = c(5,10,15),
+                            columnDefs = list(list(className = 'dt-center',
+                                                   targets = 0:1))) )
+```
+
+</center>
+
+# Predictions
+
+## Best Picture
+***
+**Nominees:**
+
+```{r results='asis'}
+
+nominees <- c("Ford v Ferrari","The Irishman","Jojo Rabbit","Joker","Little Women",
+              "Marriage Story","1917","Once ... Hollywood","Parasite")
+
+cat(paste('-', nominees), sep = '\n')
+```
+
+<center>
+**And the Oscar goes (probably) to:**
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+
+f_mov_tag <- unique(wft$WORD[(str_detect(wft$WORD,"internat") | str_detect(wft$WORD,"foreig") | str_detect(wft$WORD,"asia") | str_detect(wft$WORD,"non-engl") | str_detect(wft$WORD,"non-engl"))])
+
+best_pict <- wft %>%
+   filter((str_detect(WORD,"pict") | str_detect(WORD,"fil") | str_detect(WORD,"internat") | str_detect(WORD,"foreig") | str_detect(WORD,"asia") | str_detect(WORD,"non-engl")),
+          MOVIE %in% nominees) %>%
+   mutate(FOREIGN = if_else(WORD %in% f_mov_tag,1,0)*FREQ) %>%
+   group_by(MOVIE) %>%
+   summarise(FREQ = sum(FREQ),
+             FR_FREQ = sum(FOREIGN)) %>% ungroup() %>%
+   mutate(BM_FREQ = FREQ - 2*FR_FREQ) %>%
+   select(MOVIE,BM_FREQ) %>%
+   rename("word" = MOVIE, "freq" = BM_FREQ) %>%
+   arrange(-freq)
+
+best_pict$freq[best_pict$word == "Parasite"] <- best_pict$freq[best_pict$word == "Parasite"] + 14 - 2 
+
+best_pict$freq[best_pict$word == "1917"] <- best_pict$freq[best_pict$word == "1917"] - 1 
+
+best_pict$freq[best_pict$word %in% c("The Irishman","Little Women",
+              "Marriage Story","1917","Once ... Hollywood","Parasite")] <- best_pict$freq[best_pict$word %in% c("The Irishman","Little Women",
+              "Marriage Story","1917","Once ... Hollywood","Parasite")] + 2 
+
+best_pict$freq[best_pict$word %in% c("Jojo Rabbit","Joker")] <- best_pict$freq[best_pict$word %in% c("Jojo Rabbit","Joker")] + 1 
+
+best_pict <- best_pict %>% 
+   arrange(-freq)
+
+wordcloud2(data = as.data.frame(best_pict),
+           size = 0.6,
+           color = sample(coloresP,size = length(coloresP),replace = FALSE),
+           backgroundColor = "white",
+           shape = 'pentagon')
+
+```
+
+```{r echo = FALSE}
+
+best_pict %>% 
+   rename("Movie" = word, "Number of awards" = freq) %>% 
+   datatable(rownames = FALSE, 
+             filter = "none",
+             width = 500,
+             options = list(pageLength = 5, 
+                            scrollX = T,
+                            lengthMenu = c(5,10),
+                            columnDefs = list(list(className = 'dt-center',
+                                                   targets = 0:1))) )
+```
+
+</center>
+
+## Directing
+***
+**Nominees:**
+
+```{r results='asis'}
+
+nominees <- c("The Irishman","Joker","1917","Once ... Hollywood","Parasite")
+
+cat(paste('-', nominees), sep = '\n')
+```
+
+<center>
+**And the Oscar goes (probably) to:**
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+best_dir <- wft %>%
+   filter(str_detect(WORD,"dir"),MOVIE %in% nominees) %>%
+   group_by(MOVIE) %>%
+   summarise(FREQ = sum(FREQ)) %>% ungroup() %>%
+   rename("word" = MOVIE, "freq" = FREQ) %>%
+   arrange(-freq)
+
+wordcloud2(data = best_dir,
+           size = 0.8,
+           gridSize = 10,
+           color = sample(coloresP,size = length(coloresP),replace = FALSE),
+           backgroundColor = "white",
+           shape = 'pentagon')
+
+```
+
+```{r echo = FALSE}
+
+best_dir %>% 
+   rename("Movie" = word, "Number of awards" = freq) %>% 
+   datatable(rownames = FALSE, 
+             filter = "none",
+             width = 500,
+             options = list(pageLength = 5, 
+                            scrollX = T,
+                            lengthMenu = c(5,10),
+                            columnDefs = list(list(className = 'dt-center',
+                                                   targets = 0:1))) )
+```
+
+</center>
+
+## International Feature Film
+***
+**Nominees:**
+
+```{r results='asis'}
+
+nominees <- c("Corpus Christi","Honeyland","Les Misérables","Pain and Glory","Parasite")
+
+cat(paste('-', nominees), sep = '\n')
+```
+
+<center>
+**And the Oscar goes (probably) to:**
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+f_mov_tag <- unique(wft$WORD[(str_detect(wft$WORD,"internat") | str_detect(wft$WORD,"foreig") | str_detect(wft$WORD,"asia") | str_detect(wft$WORD,"non-engl") | str_detect(wft$WORD,"indepe"))])
+
+best_int_pict <- wft %>%
+   filter( str_detect(WORD,"foreig") | str_detect(WORD,"asia") | str_detect(WORD,"non-engl"),
+          MOVIE %in% nominees) %>%
+   group_by(MOVIE) %>%
+   summarise(FREQ = sum(FREQ)) %>% ungroup() %>%
+   select(MOVIE,FREQ) %>%
+   rename("word" = MOVIE, "freq" = FREQ) %>%
+   arrange(-freq)
+
+wordcloud2(data = as.data.frame(best_int_pict),
+           size = 0.9,
+           color = sample(coloresP,size = length(coloresP),replace = FALSE),
+           backgroundColor = "white",
+           shape = 'pentagon')
+
+```
+
+```{r echo = FALSE}
+
+best_int_pict %>% 
+   rename("Movie" = word, "Number of awards" = freq) %>% 
+   datatable(rownames = FALSE, 
+             filter = "none",
+             width = 500,
+             options = list(pageLength = 5, 
+                            scrollX = T,
+                            lengthMenu = c(5,10),
+                            columnDefs = list(list(className = 'dt-center',
+                                                   targets = 0:1))) )
+```
+
+</center>
+
+## Actress in a Leading Role
+***
+**Nominees:**
+
+```{r results='asis'}
+
+nominees <- c("Harriet","Marriage Story","Judy","Little Women","Bombshell")
+
+cat(paste('-', nominees), sep = '\n')
+```
+
+<center>
+**And the Oscar goes (probably) to:**
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+sup_act_tag <- unique(wft$WORD[str_detect(wft$WORD,"support") ])
+
+best_lea_actress <- wft %>%
+   filter((str_detect(WORD,"actre") | str_detect(WORD,"support")),
+          MOVIE %in% nominees) %>%
+   mutate(SUPP = if_else(WORD %in% sup_act_tag,1,0)*FREQ) %>%
+   group_by(MOVIE) %>%
+   summarise(FREQ = sum(FREQ),
+             SUPP_FREQ = sum(SUPP)) %>% ungroup() %>%
+   mutate(BLFA_FREQ = FREQ - 2*SUPP_FREQ) %>%
+   select(MOVIE,BLFA_FREQ) %>%
+   rename("word" = MOVIE, "freq" = BLFA_FREQ) %>%
+   arrange(-freq)
+
+wordcloud2(data = best_lea_actress,
+           size = 0.65,
+           color = sample(coloresP,size = length(coloresP),replace = FALSE),
+           backgroundColor = "white",
+           shape = 'pentagon')
+```
+
+```{r echo = FALSE}
+
+best_lea_actress %>% 
+   rename("Movie" = word, "Number of awards" = freq) %>% 
+   datatable(rownames = FALSE, 
+             filter = "none",
+             width = 500,
+             options = list(pageLength = 5, 
+                            scrollX = T,
+                            lengthMenu = c(5,10),
+                            columnDefs = list(list(className = 'dt-center',
+                                                   targets = 0:1))) )
+```
+
+</center>
+
+## Actor in a Leading Role
+***
+**Nominees:**
+
+```{r results='asis'}
+
+nominees <- c("Pain and Glory","Once ... Hollywood","Marriage Story","Joker","The Two Popes")
+
+cat(paste('-', nominees), sep = '\n')
+```
+
+<center>
+**And the Oscar goes (probably) to:**
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+sup_act_tag <- unique(wft$WORD[str_detect(wft$WORD,"support") ])
+
+best_lea_actor <- wft %>%
+   filter((str_detect(WORD,"actor") | str_detect(WORD,"support")),
+          MOVIE %in% nominees) %>%
+   mutate(SUPP = if_else(WORD %in% sup_act_tag,1,0)*FREQ) %>%
+   group_by(MOVIE) %>%
+   summarise(FREQ = sum(FREQ),
+             SUPP_FREQ = sum(SUPP)) %>% ungroup() %>%
+   mutate(BLFA_FREQ = FREQ - 2*SUPP_FREQ) %>%
+   select(MOVIE,BLFA_FREQ) %>%
+   rename("word" = MOVIE, "freq" = BLFA_FREQ) %>%
+   arrange(-freq)
+
+wordcloud2(data = best_lea_actor,
+           size = 0.6,
+           color = sample(coloresP,size = length(coloresP),replace = FALSE),
+           backgroundColor = "white",
+           shape = 'pentagon')
+
+```
+
+```{r echo = FALSE}
+
+best_lea_actor %>% 
+   rename("Movie" = word, "Number of awards" = freq) %>% 
+   datatable(rownames = FALSE, 
+             filter = "none",
+             width = 500,
+             options = list(pageLength = 5, 
+                            scrollX = T,
+                            lengthMenu = c(5,10),
+                            columnDefs = list(list(className = 'dt-center',
+                                                   targets = 0:1))) )
+```
+
+</center>
+
+## Actress in a Supporting Role
+***
+**Nominees:**
+
+```{r results='asis'}
+
+nominees <- c("Richard Jewell","Marriage Story","Jojo Rabbit","Little Women","Bombshell")
+
+cat(paste('-', nominees), sep = '\n')
+```
+
+<center>
+**And the Oscar goes (probably) to:**
+
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+sup_act_tag <- unique(wft$WORD[str_detect(wft$WORD,"support") ])
+
+best_sup_actress <- wft %>%
+   filter((str_detect(WORD,"actre") | str_detect(WORD,"support")),
+          MOVIE %in% nominees) %>%
+   mutate(SUPP = if_else(WORD %in% sup_act_tag,1,0)*FREQ) %>%
+   group_by(MOVIE) %>%
+   summarise(SUPP_FREQ = sum(SUPP)) %>% ungroup() %>%
+   select(MOVIE,SUPP_FREQ) %>%
+   rename("word" = MOVIE, "freq" = SUPP_FREQ) %>%
+   arrange(-freq)
+
+wordcloud2(data = best_sup_actress,
+           size = 0.5,
+           color = sample(coloresP,size = length(coloresP),replace = FALSE),
+           backgroundColor = "white",
+           shape = 'pentagon')
+```
+
+```{r echo = FALSE}
+
+best_sup_actress %>% 
+   rename("Movie" = word, "Number of awards" = freq) %>% 
+   datatable(rownames = FALSE, 
+             filter = "none",
+             width = 500,
+             options = list(pageLength = 5, 
+                            scrollX = T,
+                            lengthMenu = c(5,10),
+                            columnDefs = list(list(className = 'dt-center',
+                                                   targets = 0:1))) )
+```
+
+</center>
+
+## Actor in a Supporting Role
+***
+**Nominees:**
+
+```{r results='asis'}
+
+nominees <- c("A ... Neighborhood","The Two Popes","The Irishman","Once ... Hollywood")
+
+cat(paste('-', nominees), sep = '\n')
+```
+
+<center>
+**And the Oscar goes (probably) to:**
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+sup_act_tag <- unique(wft$WORD[str_detect(wft$WORD,"support") ])
+
+best_sup_actor <- wft %>%
+   filter((str_detect(WORD,"actor") | str_detect(WORD,"support")),
+          MOVIE %in% nominees) %>%
+   mutate(SUPP = if_else(WORD %in% sup_act_tag,1,0)*FREQ) %>%
+   group_by(MOVIE) %>%
+   summarise(SUPP_FREQ = sum(SUPP)) %>% ungroup() %>%
+   select(MOVIE,SUPP_FREQ) %>%
+   rename("word" = MOVIE, "freq" = SUPP_FREQ) %>%
+   arrange(-freq)
+
+wordcloud2(data = best_sup_actor,
+           size = 0.3,
+           color = sample(coloresP,size = length(coloresP),replace = FALSE),
+           backgroundColor = "white",
+           shape = 'pentagon')
+```
+
+```{r echo = FALSE}
+
+best_sup_actor %>% 
+   rename("Movie" = word, "Number of awards" = freq) %>% 
+   datatable(rownames = FALSE, 
+             filter = "none",
+             width = 500,
+             options = list(pageLength = 5, 
+                            scrollX = T,
+                            lengthMenu = c(5,10),
+                            columnDefs = list(list(className = 'dt-center',
+                                                   targets = 0:1))) )
+```
+
+</center>
+
+## Original Screenplay
+***
+**Nominees:**
+
+```{r results='asis'}
+
+nominees <- c("Knives Out","Marriage Story","1917","Once ... Hollywood","Parasite")
+
+cat(paste('-', nominees), sep = '\n')
+```
+
+<center>
+**And the Oscar goes (probably) to:**
+
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+
+best_or_scrp <- wft %>%
+   filter(str_detect(WORD,"scree"),MOVIE %in% nominees) %>%
+   group_by(MOVIE) %>%
+   summarise(FREQ = sum(FREQ)) %>% ungroup() %>%
+   rename("word" = MOVIE, "freq" = FREQ) %>%
+   arrange(-freq)
+
+wordcloud2(data = best_or_scrp,
+           size = 0.55,
+           gridSize = 10,
+           color = sample(coloresP,size = length(coloresP),replace = FALSE),
+           backgroundColor = "white",
+           shape = 'pentagon')
+
+```
+
+```{r echo = FALSE}
+
+best_or_scrp %>% 
+   rename("Movie" = word, "Number of awards" = freq) %>% 
+   datatable(rownames = FALSE, 
+             filter = "none",
+             width = 500,
+             options = list(pageLength = 5, 
+                            scrollX = T,
+                            lengthMenu = c(5,10),
+                            columnDefs = list(list(className = 'dt-center',
+                                                   targets = 0:1))) )
+```
+
+</center>
+
+## Adapted Screenplay
+***
+**Nominees:**
+
+```{r results='asis'}
+
+nominees <- c("The Irishman","Jojo Rabbit","Joker","Little Women","The Two Popes")
+
+cat(paste('-', nominees), sep = '\n')
+```
+
+<center>
+**And the Oscar goes (probably) to:**
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+best_ad_scrp <- wft %>%
+   filter(str_detect(WORD,"scree"),MOVIE %in% nominees) %>%
+   group_by(MOVIE) %>%
+   summarise(FREQ = sum(FREQ)) %>% ungroup() %>%
+   rename("word" = MOVIE, "freq" = FREQ) %>%
+   arrange(-freq)
+
+wordcloud2(data = best_ad_scrp,
+           size = 0.45,
+           gridSize = 10,
+           color = sample(coloresP,size = length(coloresP),replace = FALSE),
+           backgroundColor = "white",
+           shape = 'pentagon')
+
+```
+
+```{r echo = FALSE}
+
+best_ad_scrp %>% 
+   rename("Movie" = word, "Number of awards" = freq) %>% 
+   datatable(rownames = FALSE, 
+             filter = "none",
+             width = 500,
+             options = list(pageLength = 5, 
+                            scrollX = T,
+                            lengthMenu = c(5,10),
+                            columnDefs = list(list(className = 'dt-center',
+                                                   targets = 0:1))) )
+```
+
+</center>
+
+## Cinematography
+***
+**Nominees:**
+
+```{r results='asis'}
+
+nominees <- c("The Irishman","1917","Joker","The Lighthouse","Once ... Hollywood")
+
+cat(paste('-', nominees), sep = '\n')
+```
+
+<center>
+**And the Oscar goes (probably) to:**
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+
+best_cinema <- wft %>%
+   filter(str_detect(WORD,"cinematogr"),MOVIE %in% nominees) %>%
+   group_by(MOVIE) %>%
+   summarise(FREQ = sum(FREQ)) %>% ungroup() %>%
+   rename("word" = MOVIE, "freq" = FREQ) %>%
+   arrange(-freq)
+
+wordcloud2(data = best_cinema,
+           size = 0.9,
+           gridSize = 10,
+           color = sample(coloresP,size = length(coloresP),replace = FALSE),
+           backgroundColor = "white",
+           shape = 'pentagon')
+
+```
+
+```{r echo = FALSE}
+
+best_cinema %>% 
+   rename("Movie" = word, "Number of awards" = freq) %>% 
+   datatable(rownames = FALSE, 
+             filter = "none",
+             width = 500,
+             options = list(pageLength = 5, 
+                            scrollX = T,
+                            lengthMenu = c(5,10),
+                            columnDefs = list(list(className = 'dt-center',
+                                                   targets = 0:1))) )
+```
+
+</center>
+
+## Animated Feature Film
+***
+**Nominees:**
+
+```{r results='asis'}
+
+nominees <- c("How ... Dragon","I Lost My Body","Klaus","Missing Link","Toy Story 4")
+
+cat(paste('-', nominees), sep = '\n')
+```
+
+<center>
+**And the Oscar goes (probably) to:**
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+
+best_anim_pict <- wft %>%
+   filter(str_detect(WORD,"animated"),MOVIE %in% nominees) %>%
+   group_by(MOVIE) %>%
+   summarise(FREQ = sum(FREQ)) %>% ungroup() %>%
+   rename("word" = MOVIE, "freq" = FREQ) %>%
+   arrange(-freq)
+
+wordcloud2(best_anim_pict,
+           size = 0.65,
+           gridSize = 10,
+           color = sample(coloresP,size = length(coloresP),replace = FALSE),
+           backgroundColor = "white",
+           shape = 'pentagon')
+
+```
+
+```{r echo = FALSE}
+
+best_anim_pict %>% 
+   rename("Movie" = word, "Number of awards" = freq) %>% 
+   datatable(rownames = FALSE, 
+             filter = "none",
+             width = 500,
+             options = list(pageLength = 5, 
+                            scrollX = T,
+                            lengthMenu = c(5,10),
+                            columnDefs = list(list(className = 'dt-center',
+                                                   targets = 0:1))) )
+```
+
+</center>
+
+## Documentary Feature
+***
+**Nominees:**
+
+```{r results='asis'}
+
+nominees <- c("American Factory","For Sama","Honeyland","The Cave*","The Edge of Democracy*")
+
+cat(paste('-', nominees), sep = '\n')
+```
+
+*No data available.
+<center>
+**And the Oscar goes (probably) to:**
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+nominees <- c("American Factory","For Sama","Honeyland")
+
+best_docu <- wft %>%
+   filter(str_detect(WORD,"docume"),MOVIE %in% nominees) %>%
+   group_by(MOVIE) %>%
+   summarise(FREQ = sum(FREQ)) %>% ungroup() %>%
+   rename("word" = MOVIE, "freq" = FREQ) %>%
+   arrange(-freq)
+
+wordcloud2(best_docu,
+           size = 0.5,
+           gridSize = 10,
+           color = sample(coloresP,size = length(coloresP),replace = FALSE),
+           backgroundColor = "white",
+           shape = 'pentagon')
+
+```
+
+```{r echo = FALSE}
+
+best_docu %>% 
+   rename("Movie" = word, "Number of awards" = freq) %>% 
+   datatable(rownames = FALSE, 
+             filter = "none",
+             width = 500,
+             options = list(pageLength = 5, 
+                            scrollX = T,
+                            lengthMenu = c(5,10),
+                            columnDefs = list(list(className = 'dt-center',
+                                                   targets = 0:1))) )
+```
+
+</center>
+
+
+## Original Score
+***
+**Nominees:**
+
+```{r results='asis'}
+
+
+nominees <- c("Joker","Little Women","Marriage Story","1917","Star Wars")
+
+cat(paste('-', nominees), sep = '\n')
+```
+
+<center>
+**And the Oscar goes (probably) to:**
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+
+
+best_score <- wft %>%
+   filter(str_detect(WORD,"soundtra") | str_detect(WORD,"score"),MOVIE %in% nominees) %>%
+   group_by(MOVIE) %>%
+   summarise(FREQ = sum(FREQ) - sum(FREQ[WORD == "soundtrack"])) %>% ungroup() %>%
+   rename("word" = MOVIE, "freq" = FREQ) %>%
+   arrange(-freq)
+
+wordcloud2(data = best_score,
+           size = 0.65,
+           gridSize = 10,
+           color = sample(coloresP,size = length(coloresP),replace = FALSE),
+           backgroundColor = "white",
+           shape = 'pentagon')
+
+```
+
+```{r echo = FALSE}
+
+best_score %>% 
+   rename("Movie" = word, "Number of awards" = freq) %>% 
+   datatable(rownames = FALSE, 
+             filter = "none",
+             width = 500,
+             options = list(pageLength = 5, 
+                            scrollX = T,
+                            lengthMenu = c(5,10),
+                            columnDefs = list(list(className = 'dt-center',
+                                                   targets = 0:1))) )
+```
+
+</center>
+
+## Production Design
+***
+**Nominees:**
+
+```{r results='asis'}
+
+
+nominees <- c("The Irishman","Jojo Rabbit","1917","Once ... Hollywood","Parasite")
+
+cat(paste('-', nominees), sep = '\n')
+```
+
+<center>
+**And the Oscar goes (probably) to:**
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+
+
+
+best_production <- wft %>%
+   filter(str_detect(WORD,"produc"),MOVIE %in% nominees) %>%
+   group_by(MOVIE) %>%
+   summarise(FREQ = sum(FREQ)) %>% ungroup() %>%
+   rename("word" = MOVIE, "freq" = FREQ) %>%
+   arrange(-freq)
+
+wordcloud2(data = best_production,
+           size = 0.4,
+           gridSize = 10,
+           color = sample(coloresP,size = length(coloresP),replace = FALSE),
+           backgroundColor = "white",
+           shape = 'pentagon')
+
+```
+
+```{r echo = FALSE}
+
+best_production %>% 
+   rename("Movie" = word, "Number of awards" = freq) %>% 
+   datatable(rownames = FALSE, 
+             filter = "none",
+             width = 500,
+             options = list(pageLength = 5, 
+                            scrollX = T,
+                            lengthMenu = c(5,10),
+                            columnDefs = list(list(className = 'dt-center',
+                                                   targets = 0:1))) )
+```
+
+</center>
+
+
+## Film Editing
+***
+**Nominees:**
+
+```{r results='asis'}
+
+
+nominees <- c("The Irishman","Jojo Rabbit","Joker","Ford v Ferrari","Parasite")
+
+cat(paste('-', nominees), sep = '\n')
+```
+
+<center>
+**And the Oscar goes (probably) to:**
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+
+
+
+best_film_edit <- wft %>%
+   filter(str_detect(WORD,"editi"),MOVIE %in% nominees) %>%
+   group_by(MOVIE) %>%
+   summarise(FREQ = sum(FREQ)) %>% ungroup() %>%
+   rename("word" = MOVIE, "freq" = FREQ) %>%
+   arrange(-freq)
+
+wordcloud2(data = best_film_edit,
+           size = 0.55,
+           gridSize = 10,
+           color = sample(coloresP,size = length(coloresP),replace = FALSE),
+           backgroundColor = "white",
+           shape = 'pentagon')
+
+```
+
+```{r echo = FALSE}
+
+best_film_edit %>% 
+   rename("Movie" = word, "Number of awards" = freq) %>% 
+   datatable(rownames = FALSE, 
+             filter = "none",
+             width = 500,
+             options = list(pageLength = 5, 
+                            scrollX = T,
+                            lengthMenu = c(5,10),
+                            columnDefs = list(list(className = 'dt-center',
+                                                   targets = 0:1))) )
+```
+
+</center>
+
+
+## Sound (Mixing and Editing)*
+
+***
+
+**Nominees:**
+
+```{r results='asis'}
+
+
+nominees <- c("Ad Astra","Ford v Ferrari","Joker","1917","Once ... Hollywood","Star Wars")
+
+cat(paste('-', nominees), sep = '\n')
+```
+
+*The Mixing and Editing are usually a joint award in other competitions.
+
+<center>
+
+**And the Oscar goes (probably) to:**
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+
+
+
+best_sound <- wft %>%
+   filter(str_detect(WORD,"sound") | str_detect(WORD,"music"),MOVIE %in% nominees) %>%
+   group_by(MOVIE) %>%
+   summarise(FREQ = sum(FREQ) - sum(FREQ[WORD == "soundtrack"])) %>% ungroup() %>%
+   rename("word" = MOVIE, "freq" = FREQ) %>%
+   arrange(-freq)
+
+wordcloud2(data = best_sound,
+           size = 0.3,
+           gridSize = 10,
+           color = sample(coloresP,size = length(coloresP),replace = FALSE),
+           backgroundColor = "white",
+           shape = 'pentagon')
+
+```
+
+```{r echo = FALSE}
+
+best_sound %>% 
+   rename("Movie" = word, "Number of awards" = freq) %>% 
+   datatable(rownames = FALSE, 
+             filter = "none",
+             width = 500,
+             options = list(pageLength = 5, 
+                            scrollX = T,
+                            lengthMenu = c(5,10),
+                            columnDefs = list(list(className = 'dt-center',
+                                                   targets = 0:1))) )
+```
+
+</center>
+
+## Visual Effects
+***
+**Nominees:**
+
+```{r results='asis'}
+
+
+nominees <- c("Avengers","The Irishman","The Lion King","1917","Star Wars")
+
+cat(paste('-', nominees), sep = '\n')
+```
+
+<center>
+**And the Oscar goes (probably) to:**
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+
+
+best_visual <- wft %>%
+   filter(str_detect(WORD,"virt") | str_detect(WORD,"visual") | str_detect(WORD,"photore"),MOVIE %in% nominees) %>%
+   group_by(MOVIE) %>%
+   summarise(FREQ = sum(FREQ) - sum(FREQ[WORD == "visually"])) %>% ungroup() %>%
+   rename("word" = MOVIE, "freq" = FREQ) %>%
+   arrange(-freq)
+
+wordcloud2(data = best_visual,
+           size = 0.65,
+           gridSize = 10,
+           color = sample(coloresP,size = length(coloresP),replace = FALSE),
+           backgroundColor = "white",
+           shape = 'pentagon')
+
+```
+
+```{r echo = FALSE}
+
+best_visual %>% 
+   rename("Movie" = word, "Number of awards" = freq) %>% 
+   datatable(rownames = FALSE, 
+             filter = "none",
+             width = 500,
+             options = list(pageLength = 5, 
+                            scrollX = T,
+                            lengthMenu = c(5,10),
+                            columnDefs = list(list(className = 'dt-center',
+                                                   targets = 0:1))) )
+```
+
+</center>
+
+## Makeup and Hairstyling
+***
+**Nominees:**
+
+```{r results='asis'}
+
+
+nominees <- c("Bombshell","Joker","Judy","Maleficent","1917")
+
+cat(paste('-', nominees), sep = '\n')
+```
+
+<center>
+**And the Oscar goes (probably) to:**
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+
+
+best_hair_make <- wft %>%
+   filter(str_detect(WORD,"hair") | str_detect(WORD,"make") ,MOVIE %in% nominees) %>%
+   group_by(MOVIE) %>%
+   summarise(FREQ = sum(FREQ)) %>% ungroup() %>%
+   rename("word" = MOVIE, "freq" = FREQ) %>%
+   arrange(-freq)
+
+wordcloud2(data = best_hair_make,
+           size = 0.65,
+           gridSize = 10,
+           color = sample(coloresP,size = length(coloresP),replace = FALSE),
+           backgroundColor = "white",
+           shape = 'pentagon')
+
+```
+
+```{r echo = FALSE}
+
+best_hair_make %>% 
+   rename("Movie" = word, "Number of awards" = freq) %>% 
+   datatable(rownames = FALSE, 
+             filter = "none",
+             width = 500,
+             options = list(pageLength = 5, 
+                            scrollX = T,
+                            lengthMenu = c(5,10),
+                            columnDefs = list(list(className = 'dt-center',
+                                                   targets = 0:1))) )
+```
+
+</center>
